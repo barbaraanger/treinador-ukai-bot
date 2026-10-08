@@ -65,3 +65,4 @@ O áudio é mantido em memória durante cada chamada e não é arquivado pelo bo
 - O custo da transcrição depende do modelo configurado e do volume de áudio. `TRANSCRIPTION_MODEL` pode ser ajustado para um modelo de transcrição disponível na sua conta.
 # treinador-ukai-bot
 # treinador-ukai-bot
+# treinador-ukai-bot

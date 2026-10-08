@@ -20,12 +20,16 @@ import {
   VoiceConnectionStatus
 } from '@discordjs/voice';
 
-const { DISCORD_TOKEN, OPENAI_API_KEY } = process.env;
-if (!DISCORD_TOKEN || !OPENAI_API_KEY) {
-  throw new Error('Defina DISCORD_TOKEN e OPENAI_API_KEY no arquivo .env.');
+const { DISCORD_TOKEN, GROQ_API_KEY } = process.env;
+if (!DISCORD_TOKEN || !GROQ_API_KEY) {
+  throw new Error('Defina DISCORD_TOKEN e GROQ_API_KEY no arquivo .env.');
 }
 
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const groq = new OpenAI({
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: 'https://api.groq.com/openai/v1'
+});
+
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 const tempDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.tmp');
 const sessions = new Map();
@@ -86,6 +90,7 @@ client.on(Events.InteractionCreate, async interaction => {
 function watchSpeakers(connection, session) {
   const receiver = connection.receiver;
   receiver.speaking.on('start', userId => {
+	console.log('Detectei fala: ' + userId);
     const member = connection.joinConfig.guildId
       ? client.guilds.cache.get(connection.joinConfig.guildId)?.members.cache.get(userId)
       : null;
@@ -94,49 +99,41 @@ function watchSpeakers(connection, session) {
     const audio = receiver.subscribe(userId, {
       end: { behavior: EndBehaviorType.AfterSilence, duration: 900 }
     });
-    const decoder = new prism.opus.Decoder({ rate: 48_000, channels: 2, frameSize: 960 });
+ const decoder = new prism.opus.Decoder({ rate: 48_000, channels: 2, frameSize: 960 });
     const chunks = [];
     let bytes = 0;
-    audio.pipe(decoder);
     decoder.on('data', chunk => {
-      bytes += chunk.length;
-      // Evita consumir memória sem limite se uma captura não encerrar corretamente.
-      if (bytes <= 48_000 * 2 * 2 * 90) chunks.push(chunk);
-      else audio.destroy(new Error('Trecho excedeu 90 segundos.'));
-    });
-    decoder.on('error', error => console.error('Falha ao decodificar áudio:', error.message));
-    decoder.on('end', () => {
-      if (chunks.length && !session.closing) {
-        void transcribeChunk(Buffer.concat(chunks), userId, session);
-      }
-    });
+  bytes += chunk.length;
+  if (bytes <= 48_000 * 2 * 2 * 90) chunks.push(chunk);
+  else audio.destroy(new Error('Trecho excedeu 90 segundos.'));
+});
+
+decoder.on('error', error => console.error('Falha ao decodificar áudio:', error.message));
+
+decoder.on('end', () => {
+  console.log('Áudio encerrado: ' + userId + ', ' + bytes + ' bytes PCM');
+  if (chunks.length && !session.closing) {
+    void transcribeChunk(Buffer.concat(chunks), userId, session);
+  }
+});
   });
 }
 
 async function transcribeChunk(pcm, userId, session) {
-  const filePath = path.join(tempDir, `${randomUUID()}.wav`);
-  try {
-    await mkdir(tempDir, { recursive: true });
-    const wav = new WaveFile();
-    wav.fromScratch(2, 48_000, '16', pcm);
-    const data = Buffer.from(wav.toBuffer());
-    const audioFile = await toFile(data, 'reuniao.wav', { type: 'audio/wav' });
-    const result = await openai.audio.transcriptions.create({
-      file: audioFile,
-      model: process.env.TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe',
-      language: 'pt'
-    });
-    const text = result.text?.trim();
-    if (!text || !session.textChannel) return;
-    const guild = client.guilds.cache.get(session.connection.joinConfig.guildId);
-    const username = guild?.members.cache.get(userId)?.displayName || 'Participante';
-    await session.textChannel.send(`**${escapeMarkdown(username)}:** ${text}`);
-  } catch (error) {
-    console.error('Falha na transcrição:', error.message);
-    if (session.textChannel) await session.textChannel.send('Não consegui transcrever um trecho de áudio.').catch(() => {});
-  } finally {
-    await unlink(filePath).catch(() => {});
-  }
+ const alignedPcm = Uint8Array.from(pcm);
+const samples = new Int16Array(alignedPcm.buffer);
+const wav = new WaveFile();
+wav.fromScratch(2, 48_000, '16', samples);
+const data = Buffer.from(wav.toBuffer());
+const audioFile = await toFile(data, 'reuniao.wav', { type: 'audio/wav' });
+
+const result = await groq.audio.transcriptions.create({
+  file: audioFile,
+  model: process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3-turbo',
+  language: 'pt',
+  response_format: 'json',
+  temperature: 0
+});
 }
 
 function finishSession(guildId, message) {
@@ -149,7 +146,7 @@ function finishSession(guildId, message) {
 }
 
 function escapeMarkdown(value) {
-  return value.replace(/[\\_*~`|>]/g, '\\$&');
+  return value.replace(/[\\_*~|>]/g, '\\$&').replace(/\x60/g, '\\$&');
 }
 
 client.login(DISCORD_TOKEN);

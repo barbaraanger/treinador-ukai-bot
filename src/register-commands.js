@@ -12,7 +12,34 @@ const commands = [
     .setDescription('Entra no seu canal de voz e inicia a transcrição da reunião.'),
   new SlashCommandBuilder()
     .setName('sair')
-    .setDescription('Encerra a transcrição e desconecta do canal de voz.')
+    .setDescription('Encerra a transcrição e desconecta do canal de voz.'),
+  new SlashCommandBuilder()
+    .setName('vocabulario')
+    .setDescription('Ensina ao bot nomes e termos para melhorar a transcrição.')
+    .addSubcommand(subcommand => subcommand
+      .setName('adicionar')
+      .setDescription('Adiciona um termo e formas que a transcrição costuma errar.')
+      .addStringOption(option => option
+        .setName('termo')
+        .setDescription('A forma correta do termo')
+        .setRequired(true)
+        .setMaxLength(100))
+      .addStringOption(option => option
+        .setName('variacoes')
+        .setDescription('Formas erradas separadas por vírgula, para corrigir automaticamente')
+        .setRequired(false)
+        .setMaxLength(100)))
+    .addSubcommand(subcommand => subcommand
+      .setName('remover')
+      .setDescription('Remove um termo do vocabulário.')
+      .addStringOption(option => option
+        .setName('termo')
+        .setDescription('A forma correta do termo')
+        .setRequired(true)
+        .setMaxLength(100)))
+    .addSubcommand(subcommand => subcommand
+      .setName('listar')
+      .setDescription('Mostra o vocabulário salvo para este servidor.'))
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);

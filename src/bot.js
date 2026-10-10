@@ -304,7 +304,7 @@ function queueAudioForTranscription(pcm, userId, session) {
   session.pendingAudio.set(userId, pending.subarray(offset));
   const remainingSeconds = Math.floor((pending.length - offset) / PCM_BYTES_PER_SECOND);
   if (remainingSeconds > 0) {
-    console.log(`Áudio pendente de ${userId}: ${remainingSeconds}s; aguardando 10s para transcrever.`);
+    console.log(`Áudio pendente de ${userId}: ${remainingSeconds}s; aguardando 8s para transcrever.`);
   }
 }
 
@@ -342,10 +342,26 @@ async function transcribeChunk(pcm, userId, session) {
       model: process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3',
       language: 'pt',
       prompt: vocabularyPrompt(session.guildId),
-      response_format: 'json',
+      response_format: 'verbose_json',
       temperature: 0
     });
-    const transcript = applyVocabularyCorrections(result.text?.trim() || '', session.guildId);
+    let recognizedText = result.text?.trim() || '';
+    if (Array.isArray(result.segments)) {
+      const speechSegments = result.segments.filter(segment => {
+        const noSpeechProbability = Number(segment.no_speech_prob);
+        const averageLogProbability = Number(segment.avg_logprob);
+        if (noSpeechProbability > 0.2 && averageLogProbability > -1.0) {
+          console.log(`Indicadores do segmento de ${userId}: no_speech_prob=${noSpeechProbability.toFixed(2)}, avg_logprob=${averageLogProbability.toFixed(2)}.`);
+        }
+        return !(noSpeechProbability > 0.35 && averageLogProbability > -1.0);
+      });
+      const suppressedSegments = result.segments.length - speechSegments.length;
+      if (suppressedSegments > 0) {
+        console.log(`Groq marcou ${suppressedSegments} segmento(s) como provável silêncio para ${userId}; removi esses trechos.`);
+      }
+      recognizedText = speechSegments.map(segment => segment.text?.trim()).filter(Boolean).join(' ').trim();
+    }
+    const transcript = applyVocabularyCorrections(recognizedText, session.guildId);
     if (transcript) {
       console.log(`Groq retornou ${transcript.length} caracteres para ${userId}.`);
       session.transcripts.push({ userId, text: transcript });
